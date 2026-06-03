@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,12 +103,76 @@ class TaskListResponse(BaseModel):
     page_size: int
 
 
+class TaskCompleteRequest(BaseModel):
+    """PATCH /tasks/{id}/complete 请求体。"""
+
+    operator_id: Optional[int] = Field(default=None, description="操作人 user_id")
+    comment: Optional[str] = Field(default=None, description="完成备注")
+
+
+class TaskCancelRequest(BaseModel):
+    """PATCH /tasks/{id}/cancel 请求体。"""
+
+    operator_id: Optional[int] = Field(default=None, description="操作人 user_id")
+    reason: Optional[str] = Field(default=None, description="取消原因")
+
+
+class TaskAssignRequest(BaseModel):
+    """PATCH /tasks/{id}/assign 请求体（assignee_id 和 assignee_name 二选一）。"""
+
+    operator_id: Optional[int] = Field(default=None, description="操作人 user_id")
+    assignee_id: Optional[int] = Field(default=None, description="新负责人 user_id")
+    assignee_name: Optional[str] = Field(default=None, description="新负责人姓名（模糊匹配）")
+    comment: Optional[str] = Field(default=None, description="分配备注")
+
+
+class TaskRemindRequest(BaseModel):
+    """POST /tasks/{id}/remind 请求体。"""
+
+    remind_at: datetime = Field(..., description="新的提醒时间（ISO 8601 本地时间）")
+    due_at: Optional[datetime] = Field(default=None, description="同时更新截止时间（可选）")
+
+
+class TaskRemindResult(BaseModel):
+    """POST /tasks/{id}/remind 响应体。"""
+
+    task_id: int
+    remind_at: datetime
+    due_at: Optional[datetime]
+    message: str
+
+
+class TaskReviewRequest(BaseModel):
+    """POST /tasks/{id}/review 请求体。"""
+
+    action: Literal["approved", "rejected", "escalated"] = Field(
+        ..., description="审核决定：approved=通过并放行, rejected=驳回并取消, escalated=升级上报"
+    )
+    reviewer_id: int = Field(..., ge=1, description="审核人 user_id")
+    comment: Optional[str] = Field(default=None, max_length=1000, description="审核备注")
+
+
+class TaskReviewResult(BaseModel):
+    """POST /tasks/{id}/review 响应体（精简）。"""
+
+    task_id: int
+    review_status: str
+    task_status: str
+    reviewer_id: int
+    reviewed_at: datetime
+    message: str
+
+
 # 显式导出 enum 给 schemas 包外使用
 __all__ = [
     "TaskDraft",
     "TaskDetail",
     "TaskListItem",
     "TaskListResponse",
+    "TaskRemindRequest",
+    "TaskRemindResult",
+    "TaskReviewRequest",
+    "TaskReviewResult",
     "TaskType",
     "TaskStatus",
     "TaskPriority",

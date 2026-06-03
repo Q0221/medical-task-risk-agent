@@ -1,12 +1,34 @@
-"""Supervisor 节点（占位）。
+"""Supervisor 路由节点（Phase 9）。
 
-职责：
-- 根据用户意图、字段完整性、风险等级与业务场景，动态路由到
-  Task / Risk / RAG / Notify / Summary 等专家 Agent。
-- 维护多轮会话状态（agent_session_context）与 trace_id。
+提供给 graph/builder.py 使用的条件路由函数：
+  route_after_supervisor(state) → 下一节点名
+  route_after_merge(state)      → 下一节点名
+  route_after_risk(state)       → 下一节点名
 """
 
+from __future__ import annotations
 
-async def route(state: dict) -> dict:
-    # TODO: 接入 LangGraph 后实现真正的 Supervisor 路由逻辑。
-    raise NotImplementedError
+from app.graph.state import AgentState
+
+
+def route_after_supervisor(state: AgentState) -> str:
+    """Supervisor 后的路由：根据 state["route"] 决定下一节点。"""
+    route = state.get("route", "done")
+    if route == "merge":
+        return "merge"
+    if route == "clarify":
+        return "clarify"
+    if route == "create":
+        return "task"
+    return "done"
+
+
+def route_after_merge(state: AgentState) -> str:
+    """Merge 后的路由：字段仍缺 → clarify；字段完整 → task。"""
+    route = state.get("route", "clarify")
+    return "clarify" if route == "clarify" else "task"
+
+
+def route_after_risk(state: AgentState) -> str:
+    """Risk 后的路由：高风险或特定类型 → rag；否则 → remind。"""
+    return "rag" if state.get("should_rag") else "remind"

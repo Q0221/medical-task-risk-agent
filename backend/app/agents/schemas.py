@@ -13,7 +13,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema import exceptions as js_exc
 
-from app.models.enums import BusinessObjectType, TaskPriority, TaskType
+from app.models.enums import BusinessObjectType, RiskLevel, TaskPriority, TaskType
 
 
 TASK_DRAFT_SCHEMA: dict[str, Any] = {
@@ -21,6 +21,10 @@ TASK_DRAFT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "intent",
+        "reply",
+        "clarify_fields",
+        "clarify_questions",
         "title",
         "type",
         "priority",
@@ -28,16 +32,35 @@ TASK_DRAFT_SCHEMA: dict[str, Any] = {
         "risk_keywords",
     ],
     "properties": {
-        "title": {"type": "string", "minLength": 1, "maxLength": 100},
-        "type": {"type": "string", "enum": [e.value for e in TaskType]},
-        "priority": {"type": "string", "enum": [e.value for e in TaskPriority]},
+        "intent": {
+            "type": "string",
+            "enum": ["create_task", "query_task", "chitchat", "unclear"],
+        },
+        "reply": {"type": ["string", "null"], "maxLength": 300},
+        "clarify_fields": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "clarify_questions": {
+            "type": ["object", "null"],
+            "additionalProperties": {"type": "string"},
+        },
+        "title": {"type": ["string", "null"], "maxLength": 100},
+        "type": {
+            "type": ["string", "null"],
+            "enum": [e.value for e in TaskType] + [None],
+        },
+        "priority": {
+            "type": ["string", "null"],
+            "enum": [e.value for e in TaskPriority] + [None],
+        },
         "description": {"type": ["string", "null"]},
         "assignee_name": {"type": ["string", "null"]},
         "hospital_name": {"type": ["string", "null"]},
         "product_name": {"type": ["string", "null"]},
         "business_object_type": {
-            "type": "string",
-            "enum": [e.value for e in BusinessObjectType],
+            "type": ["string", "null"],
+            "enum": [e.value for e in BusinessObjectType] + [None],
         },
         "business_object_id": {"type": ["string", "null"]},
         "remind_at": {
@@ -49,7 +72,7 @@ TASK_DRAFT_SCHEMA: dict[str, Any] = {
             "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$",
         },
         "risk_keywords": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {"type": "string"},
         },
     },
@@ -75,9 +98,44 @@ def assert_valid(data: Any) -> None:
     _validator.validate(data)
 
 
+RISK_ASSESSMENT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["level", "reason", "suggested_action", "confidence", "signals"],
+    "properties": {
+        "level": {"type": "string", "enum": [e.value for e in RiskLevel]},
+        "reason": {"type": "string", "maxLength": 500},
+        "suggested_action": {"type": "string", "maxLength": 500},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "signals": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 10,
+        },
+    },
+}
+
+
+_risk_validator = Draft202012Validator(RISK_ASSESSMENT_SCHEMA)
+
+
+def validate_risk_assessment(data: Any) -> list[str]:
+    """返回错误信息列表；空列表表示通过校验。"""
+    if not isinstance(data, dict):
+        return [f"top-level must be a JSON object, got {type(data).__name__}"]
+    errors: list[str] = []
+    for err in _risk_validator.iter_errors(data):
+        path = ".".join(str(p) for p in err.absolute_path) or "<root>"
+        errors.append(f"{path}: {err.message}")
+    return errors
+
+
 __all__ = [
     "TASK_DRAFT_SCHEMA",
+    "RISK_ASSESSMENT_SCHEMA",
     "validate_task_draft",
+    "validate_risk_assessment",
     "assert_valid",
     "js_exc",
 ]

@@ -45,6 +45,23 @@ class Settings(BaseSettings):
     RAG_BASE_URL: str = ""
     RAG_API_KEY: str = ""
 
+    # ── Notify Agent（Phase 8）──────────────────────────────────────────
+    # 默认通知渠道：im（站内消息）| wxwork | email
+    DEFAULT_NOTIFY_CHANNEL: str = "im"
+
+    # 企业微信群机器人 Webhook（留空则禁用）
+    WXWORK_WEBHOOK_URL: str = ""
+    # 推送时是否 @所有人
+    WXWORK_MENTION_ALL: bool = False
+
+    # SMTP 邮件（留空则禁用）
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_USE_SSL: bool = True
+
     @property
     def database_url(self) -> str:
         password = quote_plus(self.MYSQL_PASSWORD) if self.MYSQL_PASSWORD else ""
