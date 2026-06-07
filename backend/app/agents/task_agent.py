@@ -38,8 +38,20 @@ logger = get_logger(__name__)
 
 MAX_RETRIES = 2
 
-# 业务上必须有的字段（无法从输入推断时必须追问）
-_REQUIRED_BUSINESS_FIELDS = ["assignee_name"]
+# Agent 创建任务前必须补齐的业务信息：
+# 1) 具体任务内容；2) 负责人；3) 截止/提醒时间。
+_REQUIRED_BUSINESS_FIELDS = ["title", "assignee_name", "due_at"]
+_TIME_FIELDS = {"due_at", "remind_at"}
+_GENERIC_TASK_TERMS = (
+    "跟进", "处理", "安排", "推进", "联系", "对接", "回访", "看一下", "处理一下", "安排一下",
+    "任务", "事项", "事情", "这个", "医院", "客户",
+)
+_SPECIFIC_TASK_HINTS = (
+    "投诉", "反馈", "试用", "资质", "材料", "采购", "进度", "售后", "异常", "故障",
+    "不良", "反应", "合规", "审核", "合同", "订单", "报价", "付款", "发票", "验收",
+    "培训", "维修", "回款", "报告", "SOP", "知识库", "库存", "发货", "交付", "安装",
+    "升级", "复核", "召回", "病例", "患者",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +72,7 @@ class ClarifyResult:
     draft_raw: dict = field(default_factory=dict)        # 当前草稿（含 null 字段）
     clarify_fields: list[str] = field(default_factory=list)
     clarify_questions: dict[str, str] = field(default_factory=dict)
+    retry_count: int = 0
 
     @property
     def first_question(self) -> str:
@@ -215,14 +228,12 @@ async def merge_clarification(
 
     # 合并失败时回退到原草稿继续追问第一个字段
     logger.warning("merge_clarification failed after retries, keeping original draft")
-    clarify_fields = draft_raw.get("clarify_fields") or _REQUIRED_BUSINESS_FIELDS
-    clarify_questions = draft_raw.get("clarify_questions") or {
-        "assignee_name": "请问这个任务由谁来负责处理？"
-    }
+    clarify_fields, clarify_questions = _normalize_clarification(draft_raw)
     return ClarifyResult(
         draft_raw=draft_raw,
         clarify_fields=clarify_fields,
         clarify_questions=clarify_questions,
+        retry_count=MAX_RETRIES,
     )
 
 
@@ -245,21 +256,16 @@ def _dispatch(
         return IntentResult(intent=intent, reply=reply)
 
     # ── 建任务意图：检查业务必填字段 ──
-    clarify_fields: list[str] = parsed.get("clarify_fields") or []
-    clarify_questions: dict = parsed.get("clarify_questions") or {}
-
-    # 若 LLM 未把缺失字段加入 clarify_fields，我们也做兜底检查
-    assignee = parsed.get("assignee_name")
-    if assignee is None and user_id is None and "assignee_name" not in clarify_fields:
-        clarify_fields.append("assignee_name")
-        if "assignee_name" not in clarify_questions:
-            clarify_questions["assignee_name"] = "请问这个任务由谁来负责处理？"
+    clarify_fields, clarify_questions = _normalize_clarification(parsed)
+    parsed["clarify_fields"] = clarify_fields
+    parsed["clarify_questions"] = clarify_questions
 
     if clarify_fields:
         return ClarifyResult(
             draft_raw=parsed,
             clarify_fields=clarify_fields,
             clarify_questions=clarify_questions,
+            retry_count=retry_count,
         )
 
     # ── 字段完整，尝试 Pydantic 校验 ──
@@ -273,6 +279,107 @@ def _dispatch(
     except ValidationError:
         logger.warning("Pydantic validation failed for parsed=%s", parsed)
         return None
+
+
+def _normalize_clarification(parsed: dict) -> tuple[list[str], dict[str, str]]:
+    """按业务三要素兜底规范化缺失字段与追问文案。"""
+    raw_questions = parsed.get("clarify_questions") or {}
+    if not isinstance(raw_questions, dict):
+        raw_questions = {}
+
+    missing_fields: list[str] = []
+
+    def add(field: str) -> None:
+        if field not in missing_fields:
+            missing_fields.append(field)
+
+    if _needs_task_detail(parsed):
+        add("title")
+    if _needs_assignee(parsed):
+        add("assignee_name")
+    if _needs_time(parsed):
+        add(_time_clarify_field(parsed))
+
+    questions = {
+        field: raw_questions.get(field) or _default_clarify_question(field, parsed)
+        for field in missing_fields
+    }
+    if missing_fields:
+        questions[missing_fields[0]] = _combined_clarify_question(missing_fields, parsed)
+    return missing_fields, questions
+
+
+def _needs_task_detail(parsed: dict) -> bool:
+    """判断任务是否只停留在“跟进/处理某对象”的泛化描述。"""
+    title = _clean_text(parsed.get("title"))
+    description = _clean_text(parsed.get("description"))
+    text = f"{title} {description}".strip()
+    if not title:
+        return True
+    if any(hint in text for hint in _SPECIFIC_TASK_HINTS):
+        return False
+    return any(term in text for term in _GENERIC_TASK_TERMS)
+
+
+def _needs_assignee(parsed: dict) -> bool:
+    assignee = _clean_text(parsed.get("assignee_name"))
+    return assignee == ""
+
+
+def _needs_time(parsed: dict) -> bool:
+    return not parsed.get("due_at") and not parsed.get("remind_at")
+
+
+def _time_clarify_field(parsed: dict) -> str:
+    text = " ".join(
+        _clean_text(parsed.get(key))
+        for key in ("title", "description")
+    )
+    return "remind_at" if any(word in text for word in ("提醒", "通知")) else "due_at"
+
+
+def _combined_clarify_question(fields: list[str], parsed: dict) -> str:
+    if len(fields) == 1:
+        return _default_clarify_question(fields[0], parsed)
+
+    labels = [_field_label(field) for field in fields]
+    example = "例如：请张客服明天下午3点回访医院A试用反馈。"
+    if "title" in fields:
+        hospital = _clean_text(parsed.get("hospital_name"))
+        if hospital:
+            rest = [label for label in labels if label != "具体任务内容"]
+            suffix = f"，并补充{'和'.join(rest)}" if rest else ""
+            return f"请明确具体要跟进{hospital}的什么事项{suffix}。{example}"
+    return f"请明确{'、'.join(labels)}。{example}"
+
+
+def _default_clarify_question(field: str, parsed: dict) -> str:
+    if field == "title":
+        hospital = _clean_text(parsed.get("hospital_name"))
+        if hospital:
+            return f"请明确具体要跟进{hospital}的什么事项，例如：回访试用反馈、补充资质材料、确认采购进度。"
+        return "请明确具体任务内容，例如：回访医院试用反馈、补充资质材料、确认采购进度。"
+    if field == "assignee_name":
+        return "请明确负责人，例如：张客服 / 李医学 / 我来负责。"
+    if field in _TIME_FIELDS:
+        return "请明确任务时间，例如：今天下午3点 / 明天17:00；如果是提醒任务，请说明提醒时间。"
+    return "请补充必要信息。"
+
+
+def _field_label(field: str) -> str:
+    if field == "title":
+        return "具体任务内容"
+    if field == "assignee_name":
+        return "负责人"
+    if field in _TIME_FIELDS:
+        return "任务时间"
+    return field
+
+
+def _clean_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _to_draft_input(parsed: dict) -> dict:

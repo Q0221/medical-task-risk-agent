@@ -109,9 +109,33 @@ alembic downgrade base        # 回退到空库
 alembic revision --autogenerate -m "add xxx"   # 修改 ORM 后生成新迁移
 ```
 
-### 5. 启动服务
+### 5. 启动 rag_sys 真实 RAG 服务（可选，推荐）
+
+本项目的 RAG 子智能体支持对接 `rag_sys`（真实向量 RAG：Milvus + BGE-M3 + bge-reranker），用于替代内置关键词兜底检索。
+
+> 跳过此步骤时，RAG 自动回落到内置 SOP 关键词检索模式，功能不受影响。
+
+```powershell
+# 步骤 1：启动 Milvus 向量数据库
+cd D:\github_project\rag_sys
+docker compose up -d
+
+# 步骤 2：启动 rag_sys 服务（端口 8001，使用专用 conda 环境）
+& "D:\envs\rag_sys\python.exe" scripts/run_api.py
+# 等待日志出现：Uvicorn running on http://0.0.0.0:8001
+```
+
+`.env` 已配置好 RAG 地址（无需修改）：
+
+```dotenv
+RAG_BASE_URL=http://localhost:8001
+RAG_API_KEY=
+```
+
+### 6. 启动本服务
 
 ```bash
+#conda activate D:/envs/agent_env
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -122,13 +146,13 @@ uvicorn app.main:app --reload --port 8000
 - 健康检查： <http://localhost:8000/api/v1/healthz>
 - 就绪检查： <http://localhost:8000/api/v1/readyz>
 
-### 6. 运行测试
+### 7. 运行测试
 
 ```bash
 pytest -q
 ```
 
-### 7. 端到端验证：自然语言建任务（Phase 2 + 3 闭环）
+### 8. 端到端验证：自然语言建任务（Phase 2 + 3 闭环）
 
 服务起好后，向 Agent 入口发一条中文需求：
 
@@ -499,6 +523,12 @@ Invoke-RestMethod -Method DELETE -Uri http://localhost:8000/api/v1/tasks/1/remin
 
 ## Phase 6 端到端验证：知识库问答 + Knowledge Gap
 
+> **RAG 升级说明**：RAG 子智能体已对接 `rag_sys` 真实向量 RAG 服务（Milvus + BGE-M3 + bge-reranker），替代原有关键词兜底检索。
+> - `rag_sys` 运行在 **http://localhost:8001**
+> - 召回来源：Milvus 向量库（需提前用 `scripts/build_index.py` 建库）
+> - 置信度：由 BGE Reranker 的 `rerank_score` 推导，无命中时为 `0.0`
+> - 回落机制：`rag_sys` 不可达时自动回落内置 SOP 关键词检索
+
 ### 直接知识问答（高置信度）
 
 ```powershell
@@ -507,18 +537,17 @@ Invoke-RestMethod -Method POST -Uri http://localhost:8000/api/v1/agent/knowledge
     -ContentType "application/json; charset=utf-8" -Body $body
 ```
 
-预期返回：
+预期返回（接入 rag_sys 后 `used_builtin` 为 `false`）：
 ```json
 {
   "code": 0,
   "data": {
     "question": "...",
-    "answer": "严重不良事件须在 15 个工作日内上报... 死亡/危及生命须在 7 个工作日内...",
-    "confidence": 0.85,
+    "answer": "根据 SOP 文档，严重不良事件须在 15 个工作日内上报...",
+    "confidence": 0.82,
     "is_gap": false,
-    "references": ["SOP-ADV-001"],
-    "key_steps": ["不良事件紧急处理 SOP"],
-    "used_builtin": true
+    "references": ["parent-xxxx"],
+    "used_builtin": false
   }
 }
 ```

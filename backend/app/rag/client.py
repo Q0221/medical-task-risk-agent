@@ -88,7 +88,7 @@ class RagClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=35) as client:
             resp = await client.post(
                 f"{self._base_url}/ask",
                 headers=headers,
@@ -121,7 +121,7 @@ class RagClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=35) as client:
             resp = await client.post(
                 f"{self._base_url}/retrieve",
                 headers=headers,

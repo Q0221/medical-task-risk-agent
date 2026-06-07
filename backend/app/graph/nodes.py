@@ -62,6 +62,28 @@ def _cfg(config: RunnableConfig) -> dict:
     return config.get("configurable", {})
 
 
+def _clarify_message(draft_raw: dict, pending_field: str) -> str:
+    fields = draft_raw.get("clarify_fields") if isinstance(draft_raw, dict) else None
+    if not isinstance(fields, list) or not fields:
+        fields = [pending_field]
+    labels = []
+    for field in fields:
+        label = _clarify_field_label(str(field))
+        if label not in labels:
+            labels.append(label)
+    return f"需要补充信息：{'、'.join(labels)}"
+
+
+def _clarify_field_label(field: str) -> str:
+    if field in ("title", "description"):
+        return "具体任务内容"
+    if field == "assignee_name":
+        return "负责人"
+    if field in ("due_at", "remind_at"):
+        return "任务时间"
+    return field
+
+
 # ===========================================================================
 # 1. Supervisor Node
 # ===========================================================================
@@ -113,7 +135,7 @@ async def supervisor_node(state: AgentState, config: RunnableConfig) -> dict:
                 "draft_raw": result.draft_raw,
                 "pending_field": result.pending_field or "assignee_name",
                 "pending_question": result.first_question,
-                "retry_count": result.retry_count,
+                "retry_count": getattr(result, "retry_count", 0),
             }
 
         # TaskExtractionResult
@@ -161,7 +183,7 @@ async def merge_node(state: AgentState, config: RunnableConfig) -> dict:
                 "draft_raw": merged.draft_raw,
                 "pending_field": merged.pending_field or "assignee_name",
                 "pending_question": merged.first_question,
-                "retry_count": merged.retry_count,
+                "retry_count": getattr(merged, "retry_count", 0),
             }
 
         # 字段完整，清除 pending
@@ -187,6 +209,7 @@ async def clarify_node(state: AgentState, config: RunnableConfig) -> dict:
     session_id = state.get("session_id")
     pending_field = state.get("pending_field", "assignee_name")
     pending_question = state.get("pending_question", "请提供更多信息")
+    draft_raw = state.get("draft_raw") or {}
 
     async with NodeTracer(
         node="clarify",
@@ -196,7 +219,7 @@ async def clarify_node(state: AgentState, config: RunnableConfig) -> dict:
     ) as tracer:
         sid = session_id or generate_session_id()
         pending = PendingDraft(
-            draft_raw=state.get("draft_raw") or {},
+            draft_raw=draft_raw,
             pending_field=pending_field,
             pending_question=pending_question,
             user_id=state.get("user_id"),
@@ -207,7 +230,7 @@ async def clarify_node(state: AgentState, config: RunnableConfig) -> dict:
             intent="need_clarify",
             question=pending_question,
             session_id=sid,
-            messages=[f"需要补充信息：{pending_field}"],
+            messages=[_clarify_message(draft_raw, pending_field)],
         )
         result = resp.model_dump(mode="json")
         tracer.output = {"session_id": sid, "pending_field": pending_field}

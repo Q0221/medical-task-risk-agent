@@ -18,6 +18,7 @@ from app.core.exceptions import BizException
 from app.core.response import success
 from app.models.enums import NotificationStatus
 from app.models.notification import Notification
+from app.models.task import Task
 from app.schemas.notification import NotificationListResponse, NotificationOut
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -61,15 +62,34 @@ async def list_notifications(
             base.order_by(Notification.created_at.desc()).offset(offset).limit(page_size)
         )
     ).scalars().all()
+    task_ids = [n.task_id for n in items if n.task_id]
+    task_map = {}
+    if task_ids:
+        task_rows = (
+            await session.execute(
+                select(Task).where(Task.id.in_(task_ids), Task.deleted_at.is_(None))
+            )
+        ).scalars().all()
+        task_map = {t.id: t for t in task_rows}
 
     return success(
         NotificationListResponse(
             total=total,
             page=page,
             page_size=page_size,
-            items=[NotificationOut.model_validate(n) for n in items],
+            items=[_to_notification_out(n, task_map.get(n.task_id)) for n in items],
         ).model_dump(mode="json")
     )
+
+
+def _to_notification_out(notif: Notification, task: Optional[Task]) -> NotificationOut:
+    out = NotificationOut.model_validate(notif)
+    if task is not None:
+        out.task_status = task.status
+        out.task_created_at = task.created_at
+        out.task_remind_at = task.remind_at
+        out.task_due_at = task.due_at
+    return out
 
 
 @router.post("/{notif_id}/retry", summary="手动重试失败通知")

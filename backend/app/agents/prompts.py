@@ -22,10 +22,12 @@ TASK_EXTRACTION_SYSTEM = """你是一名医疗企业内部任务协同助手，�
 - `intent` (string, required): create_task | query_task | chitchat | unclear
 - `reply` (string, nullable): chitchat/query_task 时的友好回复（中文，≤ 80 字）；create_task 时输出 null。
 - `clarify_fields` (array, required): 列出**业务上必须有但用户未提供**的字段名。
-  - 若 `assignee_name` 无法从输入确定，加入此数组：`["assignee_name"]`。
-  - 其他字段可选，不强制追问。
+  - 创建任务必须具备三类信息：具体任务内容、负责人、时间。
+  - 任务只说"跟进医院A""处理一下""安排一下"等泛化动作时，加入 `title`。
+  - 若 `assignee_name` 无法从输入确定，加入 `assignee_name`；不要因为系统传入 user_id 就默认当前用户是负责人。
+  - 若 `due_at` 和 `remind_at` 都无法确定，加入 `due_at`；如果用户明确说提醒/通知但没给时间，加入 `remind_at`。
 - `clarify_questions` (object, required): 对 clarify_fields 中每个字段给出中文追问，例如
-  `{{"assignee_name": "请问这个任务由谁来负责处理？"}}`
+  `{{"title": "请明确具体要做什么任务。", "assignee_name": "请明确负责人。", "due_at": "请明确任务时间。"}}`
 - `title` (string, required if create_task): 简短任务标题（≤ 30 字，体现核心动作）。
 - `type` (string, required if create_task): 任务类型，**仅可取**：
   customer_followup | product_feedback | complaint | adverse_event |
@@ -42,7 +44,7 @@ TASK_EXTRACTION_SYSTEM = """你是一名医疗企业内部任务协同助手，�
 - `risk_keywords` (array of string, required if create_task, default []): 命中风险词列表。
 
 ## 推断规则
-- 提到"提醒/通知/X 点钟" → 填 `remind_at`。
+- 提到"提醒/通知" → 填 `remind_at`；只给普通任务时间但未说提醒 → 填 `due_at`。
 - 提到"客户回访/跟进" → `type=customer_followup`。
 - 提到"投诉/升级" → `type=complaint`。
 - 提到"设备故障/异常/报警" → `type=device_anomaly`。
@@ -50,6 +52,8 @@ TASK_EXTRACTION_SYSTEM = """你是一名医疗企业内部任务协同助手，�
 - 没有明确优先级 → 默认 `medium`。
 - 提到某医院但无更细对象 → `business_object_type=hospital`。
 - **用户说"我来处理"/"我负责"/"我的任务"** → assignee_name 可填 `__self__`（系统会映射为当前用户）。
+- 输入类似"跟进医院A的任务"时，不要直接创建任务；应加入 `title` 并追问"请明确具体要跟进医院A的什么事项"。
+- 输入类似"处理一下这个事情"时，应加入 `title`、`assignee_name`、`due_at`，明确追问具体任务、负责人和时间。
 """
 
 
@@ -83,7 +87,9 @@ CLARIFY_MERGE_SYSTEM = """你是一名医疗企业内部任务协同助手。
 - 不要输出任何说明、Markdown 围栏或注释。
 - `intent` 保持 `create_task`，`clarify_fields` 更新为**仍然缺失**的字段（若已全部补全则输出 `[]`）。
 - `clarify_questions` 仍然输出，但只包含还需追问的字段。
+- 如果用户回答补充的是具体事项（如"回访试用反馈""补充资质材料""确认采购进度"），写入 `title`，并同步更新 `description` 保留完整语义。
 - 若用户回答的是人名 → 写入 `assignee_name`；若用户说"我来"/"我负责" → 写入 `__self__`。
+- 若用户回答的是时间 → 默认写入 `due_at`；若原追问或用户回答中包含"提醒/通知"，写入 `remind_at`。
 - 若无法从回答中提取有效信息 → 对应字段保持 null，并在 `clarify_fields` 中保留，在 `clarify_questions` 中重新提问。
 """
 

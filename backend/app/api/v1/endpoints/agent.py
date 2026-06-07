@@ -15,6 +15,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, redis_client
+from app.core.exceptions import BizException
 from app.core.logger import get_logger
 from app.core.response import success
 from app.graph.builder import get_compiled_graph
@@ -74,12 +75,21 @@ async def agent_chat(
     compiled_graph = get_compiled_graph()
     try:
         final_state = await compiled_graph.ainvoke(initial_state, config=graph_config)
-    except Exception as exc:
-        logger.exception("graph.ainvoke failed: %s", exc)
-        # 降级：返回友好错误
+    except BizException as exc:
+        logger.warning("graph.ainvoke business error: code=%s message=%s", exc.code, exc.message)
+        reply = _agent_error_reply(exc)
         resp = AgentChatResponse(
             intent="chitchat",
-            reply=f"系统处理异常，请稍后重试（{exc}）",
+            reply=reply,
+            messages=[reply],
+        )
+        return success(resp.model_dump(mode="json"))
+    except Exception as exc:
+        logger.exception("graph.ainvoke failed: %s", exc)
+        # 降级：返回友好错误，不暴露内部异常细节。
+        resp = AgentChatResponse(
+            intent="chitchat",
+            reply=_agent_error_reply(),
             messages=[],
         )
         return success(resp.model_dump(mode="json"))
@@ -92,3 +102,9 @@ async def agent_chat(
         return success(resp.model_dump(mode="json"))
 
     return success(final_response)
+
+
+def _agent_error_reply(exc: BizException | None = None) -> str:
+    if exc and exc.code in {4001, 4041, 4042, 4044, 4090}:
+        return exc.message
+    return "我没能完成解析，请重新描述任务，并明确具体任务、负责人和时间。"

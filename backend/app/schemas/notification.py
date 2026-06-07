@@ -26,6 +26,10 @@ class NotificationOut(BaseModel):
     sent_at: Optional[datetime]
     error_message: Optional[str]
     created_at: datetime
+    task_status: Optional[str] = None
+    task_created_at: Optional[datetime] = None
+    task_remind_at: Optional[datetime] = None
+    task_due_at: Optional[datetime] = None
 
 
 class NotificationListResponse(BaseModel):
