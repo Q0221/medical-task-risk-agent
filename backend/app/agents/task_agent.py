@@ -42,21 +42,34 @@ MAX_RETRIES = 2
 # 1) 具体任务内容；2) 负责人；3) 截止/提醒时间。
 _REQUIRED_BUSINESS_FIELDS = ["title", "assignee_name", "due_at"]
 _TIME_FIELDS = {"due_at", "remind_at"}
-_GENERIC_TASK_TERMS = (
-    "跟进", "处理", "安排", "推进", "联系", "对接", "回访", "看一下", "处理一下", "安排一下",
-    "任务", "事项", "事情", "这个", "医院", "客户",
+# 模糊动作词：单独出现或构成主干时表示任务内容不明确
+_VAGUE_ACTION_TERMS = (
+    "跟进一下", "处理一下", "安排一下", "看一下",
+    "跟进", "处理", "安排", "推进", "联系", "对接",
+    "任务", "事项", "事情", "这个",
 )
+# 业务上下文词：可出现在具体标题中，不应单独作为「不具体」依据
+_CONTEXT_TERMS = ("医院", "客户", "回访")
+_PURE_VAGUE_EXACT = {
+    "跟进", "处理", "安排", "推进", "对接", "回访", "这个事情", "这个",
+    "跟进一下", "处理一下", "安排一下", "看一下",
+}
 _SPECIFIC_TASK_HINTS = (
     "投诉", "反馈", "试用", "资质", "材料", "采购", "进度", "售后", "异常", "故障",
     "不良", "反应", "合规", "审核", "合同", "订单", "报价", "付款", "发票", "验收",
     "培训", "维修", "回款", "报告", "SOP", "知识库", "库存", "发货", "交付", "安装",
     "升级", "复核", "召回", "病例", "患者",
-    "使用情况", "使用反馈", "运行状态", "运行情况", "使用状态", "巡检", "维保",
+    "使用情况", "使用状况", "使用反馈", "运行状态", "运行状况", "运行情况", "使用状态",
+    "巡检", "维保", "设备",
 )
 # 名词性具体事项后缀：标题命中即视为已明确任务内容
 _CONCRETE_TITLE_SUFFIXES = (
-    "使用情况", "使用反馈", "运行状态", "运行情况", "使用状态",
+    "使用情况", "使用状况", "使用反馈", "运行状态", "运行状况", "运行情况", "使用状态",
     "巡检记录", "维保记录", "库存情况", "耗材余量",
+)
+_TITLE_SYNONYM_PAIRS = (
+    ("使用状况", "使用情况"),
+    ("运行状况", "运行状态"),
 )
 
 
@@ -181,9 +194,11 @@ async def merge_clarification(
     user_answer: str,
     *,
     user_id: Optional[int] = None,
+    pending_field: Optional[str] = None,
 ) -> ClarifyResult | TaskExtractionResult:
     """把用户对追问的回答合并回 draft_raw，返回更新后的结果。"""
     llm = get_chat_model()
+    effective_pending_field = pending_field or _first_clarify_field(draft_raw)
 
     messages = [
         SystemMessage(content=CLARIFY_MERGE_SYSTEM),
@@ -214,6 +229,12 @@ async def merge_clarification(
             errors = validate_task_draft(parsed)
 
         if not errors:
+            parsed = _apply_title_merge_fallback(
+                parsed,
+                pending_field=effective_pending_field,
+                user_answer=user_answer,
+                draft_raw=draft_raw,
+            )
             result = _dispatch(parsed, user_id=user_id, retry_count=attempt)
             if result is not None:
                 return result
@@ -233,7 +254,17 @@ async def merge_clarification(
             )
         )
 
-    # 合并失败时回退到原草稿继续追问第一个字段
+    # 合并失败时：规则兜底写入 title 后再判断
+    fallback_draft = _apply_title_merge_fallback(
+        dict(draft_raw),
+        pending_field=effective_pending_field,
+        user_answer=user_answer,
+        draft_raw=draft_raw,
+    )
+    fallback_result = _dispatch(fallback_draft, user_id=user_id, retry_count=MAX_RETRIES)
+    if isinstance(fallback_result, (ClarifyResult, TaskExtractionResult)):
+        return fallback_result
+
     logger.warning("merge_clarification failed after retries, keeping original draft")
     clarify_fields, clarify_questions = _normalize_clarification(draft_raw)
     return ClarifyResult(
@@ -288,11 +319,29 @@ def _dispatch(
         return None
 
 
+def _parse_llm_clarify_fields(parsed: dict) -> list[str]:
+    raw_fields = parsed.get("clarify_fields")
+    if not isinstance(raw_fields, list):
+        return []
+    return [str(field_name) for field_name in raw_fields if field_name]
+
+
+def _first_clarify_field(draft_raw: dict) -> Optional[str]:
+    fields = _parse_llm_clarify_fields(draft_raw)
+    return fields[0] if fields else None
+
+
 def _normalize_clarification(parsed: dict) -> tuple[list[str], dict[str, str]]:
-    """按业务三要素兜底规范化缺失字段与追问文案。"""
+    """按业务三要素兜底规范化缺失字段与追问文案。
+
+    规则与 LLM 分工：LLM 已判定 title 补齐时，规则仅拦截纯模糊动作。
+    """
     raw_questions = parsed.get("clarify_questions") or {}
     if not isinstance(raw_questions, dict):
         raw_questions = {}
+
+    llm_fields = _parse_llm_clarify_fields(parsed)
+    llm_trusts_title = "title" not in llm_fields and bool(_clean_text(parsed.get("title")))
 
     missing_fields: list[str] = []
 
@@ -300,12 +349,16 @@ def _normalize_clarification(parsed: dict) -> tuple[list[str], dict[str, str]]:
         if field not in missing_fields:
             missing_fields.append(field)
 
-    if _needs_task_detail(parsed):
+    if _needs_task_detail(parsed, respect_llm=llm_trusts_title):
         add("title")
     if _needs_assignee(parsed):
         add("assignee_name")
     if _needs_time(parsed):
         add(_time_clarify_field(parsed))
+
+    for field_name in llm_fields:
+        if field_name in ("title", "assignee_name", "due_at", "remind_at"):
+            add(field_name)
 
     questions = {
         field: raw_questions.get(field) or _default_clarify_question(field, parsed)
@@ -316,30 +369,100 @@ def _normalize_clarification(parsed: dict) -> tuple[list[str], dict[str, str]]:
     return missing_fields, questions
 
 
+def _normalize_title_synonyms(title: str) -> str:
+    normalized = title
+    for source_text, target_text in _TITLE_SYNONYM_PAIRS:
+        normalized = normalized.replace(source_text, target_text)
+    return normalized
+
+
+def _strip_context_and_vague_terms(title: str) -> str:
+    remainder = title
+    for term in _CONTEXT_TERMS:
+        remainder = remainder.replace(term, "")
+    for term in _VAGUE_ACTION_TERMS:
+        remainder = remainder.replace(term, "")
+    return remainder.strip("的 、，。；")
+
+
+def _is_pure_vague_action(title: str) -> bool:
+    normalized = _normalize_title_synonyms(_clean_text(title))
+    if not normalized:
+        return True
+    if normalized in _PURE_VAGUE_EXACT:
+        return True
+    return _is_only_vague_action_pattern(normalized) and len(normalized) <= 8
+
+
+def _is_only_vague_action_pattern(title: str) -> bool:
+    """标题去掉上下文和模糊动作后，是否几乎无实质内容。"""
+    return len(_strip_context_and_vague_terms(title)) < 2
+
+
+def _has_substantive_content(title: str) -> bool:
+    remainder = _strip_context_and_vague_terms(title)
+    return len(remainder) >= 2
+
+
 def _is_concrete_task_title(title: str) -> bool:
     """识别「对象+状态/情况」类名词短语，视为具体任务内容。"""
-    if any(suffix in title for suffix in _CONCRETE_TITLE_SUFFIXES):
+    normalized = _normalize_title_synonyms(title)
+    if any(suffix in normalized for suffix in _CONCRETE_TITLE_SUFFIXES):
         return True
-    # 「的」字偏正结构且无泛化动词，通常是具体事项（如「试用反馈汇总」）
-    if "的" in title and len(title) >= 5:
-        return not any(term in title for term in _GENERIC_TASK_TERMS)
+    if "的" in normalized and len(normalized) >= 5:
+        return _has_substantive_content(normalized)
     return False
 
 
-def _needs_task_detail(parsed: dict) -> bool:
-    """判断任务标题是否仍停留在“跟进/处理某对象”的泛化描述。
+def _needs_task_detail(parsed: dict, *, respect_llm: bool = False) -> bool:
+    """判断任务标题是否仍停留在泛化描述。
 
-    仅检查 title，不拼接 description——description 常保留首轮原始语句，
-    其中的「回访」「医院」等泛化词会导致用户已补充的具体标题被误判。
+    仅检查 title，不拼接 description。
+    respect_llm=True 时：信任 LLM 已补齐 title，仅拦截纯模糊动作。
     """
-    title = _clean_text(parsed.get("title"))
+    title = _normalize_title_synonyms(_clean_text(parsed.get("title")))
     if not title:
         return True
+    if respect_llm:
+        return _is_pure_vague_action(title)
     if any(hint in title for hint in _SPECIFIC_TASK_HINTS):
         return False
     if _is_concrete_task_title(title):
         return False
-    return any(term in title for term in _GENERIC_TASK_TERMS)
+    if _has_substantive_content(title):
+        return False
+    return _is_only_vague_action_pattern(title)
+
+
+def _apply_title_merge_fallback(
+    parsed: dict,
+    *,
+    pending_field: Optional[str],
+    user_answer: str,
+    draft_raw: dict,
+) -> dict:
+    """追问合并后规则兜底：用户补充任务内容时强制写入 title。"""
+    if pending_field != "title":
+        return parsed
+
+    answer = _clean_text(user_answer)
+    if not answer:
+        return parsed
+
+    merged = dict(parsed)
+    current_title = _normalize_title_synonyms(_clean_text(merged.get("title")))
+    if current_title and not _needs_task_detail(merged, respect_llm=False):
+        return merged
+
+    hospital_name = _clean_text(draft_raw.get("hospital_name") or merged.get("hospital_name"))
+    if hospital_name and hospital_name not in answer:
+        merged["title"] = f"{hospital_name}{answer}"
+    else:
+        merged["title"] = answer
+
+    if not _clean_text(merged.get("description")):
+        merged["description"] = user_answer
+    return merged
 
 
 def _needs_assignee(parsed: dict) -> bool:

@@ -9,7 +9,8 @@ import RecordsPage from "../pages/RecordsPage.vue";
 import KnowledgePage from "../pages/KnowledgePage.vue";
 import ReportsPage from "../pages/ReportsPage.vue";
 import AdminPage from "../pages/AdminPage.vue";
-import { getAuthToken, getStoredRole } from "../store/app";
+import { getMe } from "../api/auth.js";
+import { getAuthToken, getStoredRole, isAuthenticated, logout, setSession } from "../store/app";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -34,12 +35,43 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach((to) => {
+let authBootstrapDone = false;
+
+async function bootstrapAuth() {
   const token = getAuthToken();
+  if (!token) {
+    logout();
+    return false;
+  }
+  try {
+    const user = await getMe();
+    setSession({ access_token: token, user });
+    return true;
+  } catch {
+    logout();
+    return false;
+  }
+}
+
+router.beforeEach(async (to) => {
+  if (!authBootstrapDone) {
+    authBootstrapDone = true;
+    await bootstrapAuth();
+  }
+
+  const authenticated = isAuthenticated.value;
+
+  if (!authenticated && to.path !== "/login") {
+    return { path: "/login", query: { redirect: to.fullPath } };
+  }
+  if (authenticated && to.path === "/login") {
+    return "/dashboard";
+  }
+
   const role = getStoredRole();
-  if (!token && to.path !== "/login") return { path: "/login", query: { redirect: to.fullPath } };
-  if (token && to.path === "/login") return "/dashboard";
-  if (to.meta.roles && !to.meta.roles.includes(role)) return "/dashboard";
+  if (to.meta.roles && !to.meta.roles.includes(role)) {
+    return "/dashboard";
+  }
 });
 
 export default router;

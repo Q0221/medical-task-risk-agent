@@ -32,7 +32,13 @@ async function request(path, options = {}) {
   }
 
   if (json.code !== 0) {
-    if (AUTH_ERROR_CODES.has(json.code)) logout();
+    if (AUTH_ERROR_CODES.has(json.code)) {
+      logout();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.assign(`/login?redirect=${redirect}`);
+      }
+    }
     throw new ApiError(json.message || "请求失败", json.code, json.data);
   }
   return json.data;

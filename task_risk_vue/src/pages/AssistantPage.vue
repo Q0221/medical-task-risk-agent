@@ -17,6 +17,7 @@ const input = ref("");
 const chatBody = ref(null);
 const isTyping = ref(false);
 const sessionId = ref(null);
+const clarifyRoundCount = ref(0);
 
 // ── 右侧面板数据 ──
 const taskCreated = ref(false);
@@ -126,6 +127,14 @@ function createPendingAgentMessage(traceId) {
 function finalizeAgentMessage(msg, data) {
   msg.pending = false;
   msg.text = buildReplyText(data);
+  if (data.intent === "need_clarify") {
+    clarifyRoundCount.value += 1;
+    if (clarifyRoundCount.value >= 2) {
+      msg.text += "\n\n提示：也可在右侧草稿面板直接修改标题等信息，点击「确认提交」完成创建。";
+    }
+  } else if (data.intent === "create_todo") {
+    clarifyRoundCount.value = 0;
+  }
   msg.analysis = !!data.risk_assessment;
   msg.error = data.intent === "create_error";
   if (data.trace_id) msg.traceId = data.trace_id;
@@ -355,6 +364,7 @@ function startNewSession() {
   messages.value = [{ from: "agent", time: nowTime(), text: "新会话已开始。请告诉我需要处理的事项。" }];
   sessionId.value = `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   localStorage.setItem("agent_session_id", sessionId.value);
+  clarifyRoundCount.value = 0;
   draft.value = null;
   riskAssessment.value = null;
   ragResult.value = null;

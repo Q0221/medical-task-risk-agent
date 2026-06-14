@@ -22,10 +22,12 @@ function readJson(key) {
   }
 }
 
-function normalizeUser(user) {
+function normalizeUser(user, options = {}) {
+  const hasSession = options.hasSession !== false;
   const role = roleKeys.includes(user?.role) ? user.role : "employee";
   const fallback = roles[role];
-  const name = user?.name || fallback.name;
+  const name = user?.name || (hasSession ? fallback.name : "");
+  const resolvedId = user?.id ?? (hasSession ? fallback.userId : null);
   return {
     ...fallback,
     ...user,
@@ -33,24 +35,32 @@ function normalizeUser(user) {
     label: user?.role_label || fallback.label,
     dept: user?.department || fallback.dept,
     initials: name?.slice(0, 1) || fallback.initials,
-    userId: user?.id || fallback.userId,
-    name,
+    id: resolvedId,
+    userId: resolvedId,
+    name: name || fallback.name,
   };
 }
 
-const storedUser = readJson(USER_KEY);
-const initialUser = storedUser ? normalizeUser(storedUser) : normalizeUser({ role: localStorage.getItem(ROLE_KEY) || "employee" });
+const storedToken = localStorage.getItem(TOKEN_KEY) || "";
+const storedUser = storedToken ? readJson(USER_KEY) : null;
+if (!storedToken) {
+  localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(ROLE_KEY);
+}
+const initialUser = storedUser
+  ? normalizeUser(storedUser, { hasSession: true })
+  : normalizeUser({ role: "employee" }, { hasSession: false });
 
 export const appState = reactive({
-  token: localStorage.getItem(TOKEN_KEY) || "",
+  token: storedToken,
   role: initialUser.role,
   user: initialUser,
   notifications: [],
   unreadTotal: 0,
 });
 
-export const currentUser = computed(() => appState.user || normalizeUser({ role: appState.role }));
-export const currentUserId = computed(() => currentUser.value?.userId || currentUser.value?.id || 1);
+export const currentUser = computed(() => appState.user || normalizeUser({ role: appState.role }, { hasSession: Boolean(appState.token) }));
+export const currentUserId = computed(() => currentUser.value?.userId || currentUser.value?.id || null);
 export const unreadCount = computed(() =>
   appState.unreadTotal > 0
     ? appState.unreadTotal
@@ -73,20 +83,24 @@ export function getStoredRole() {
 
 export function setSession(session) {
   const token = session?.access_token || "";
-  const user = normalizeUser(session?.user || {});
+  const user = normalizeUser(session?.user || {}, { hasSession: Boolean(token) });
   appState.token = token;
   appState.user = user;
   appState.role = user.role;
   appState.notifications = [];
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(session?.user || {}));
-  localStorage.setItem(ROLE_KEY, user.role);
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(session?.user || {}));
+    localStorage.setItem(ROLE_KEY, user.role);
+  }
 }
 
 export function setRole(role) {
   if (!roleKeys.includes(role)) return;
   appState.role = role;
-  if (!appState.token) appState.user = normalizeUser({ role });
+  if (!appState.token) {
+    appState.user = normalizeUser({ role }, { hasSession: false });
+  }
   localStorage.setItem(ROLE_KEY, role);
 }
 
@@ -96,7 +110,7 @@ export function logout() {
   localStorage.removeItem(ROLE_KEY);
   appState.token = "";
   appState.role = "employee";
-  appState.user = normalizeUser({ role: "employee" });
+  appState.user = normalizeUser({ role: "employee" }, { hasSession: false });
   appState.notifications = [];
   appState.unreadTotal = 0;
 }

@@ -392,6 +392,7 @@ async def merge_node(state: AgentState, config: RunnableConfig) -> dict:
             question=pending.pending_question,
             user_answer=state["user_input"],
             user_id=effective_user_id,
+            pending_field=pending.pending_field,
         )
 
         if isinstance(merged, ClarifyResult):
