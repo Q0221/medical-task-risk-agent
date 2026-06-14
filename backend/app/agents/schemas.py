@@ -75,6 +75,21 @@ TASK_DRAFT_SCHEMA: dict[str, Any] = {
             "type": ["array", "null"],
             "items": {"type": "string"},
         },
+        # ── query_task 专用参数（其他 intent 时为 null / 缺省）──
+        "query_assignee": {"type": ["string", "null"]},
+        "query_mine": {"type": ["boolean", "null"]},
+        "query_status": {
+            "type": ["string", "null"],
+            "enum": ["pending", "in_progress", "completed", "awaiting_review", "cancelled", None],
+        },
+        "query_risk": {
+            "type": ["string", "null"],
+            "enum": [e.value for e in RiskLevel] + [None],
+        },
+        "query_overdue": {"type": ["boolean", "null"]},
+        "query_due_today": {"type": ["boolean", "null"]},
+        "query_due_this_week": {"type": ["boolean", "null"]},
+        "query_limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 20},
     },
 }
 

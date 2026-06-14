@@ -20,6 +20,10 @@ def route_after_supervisor(state: AgentState) -> str:
         return "clarify"
     if route == "create":
         return "task"
+    if route == "summary":
+        return "summary"
+    if route == "query":
+        return "query"
     return "done"
 
 

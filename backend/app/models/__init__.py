@@ -11,6 +11,9 @@ from app.models.knowledge_gap import KnowledgeGapTask
 from app.models.notification import Notification
 from app.models.product import Product
 from app.models.risk_record import RiskRecord
+from app.models.risk_rule import RiskRule
+from app.models.system_config import SystemConfig
+from app.models.sop_document import SopDocument
 from app.models.task import Task
 from app.models.task_event import TaskEvent
 from app.models.user import Role, User, UserRole
@@ -28,7 +31,10 @@ __all__ = [
     "Task",
     "TaskEvent",
     "RiskRecord",
+    "RiskRule",
+    "SystemConfig",
     "KnowledgeGapTask",
     "Notification",
     "AgentTrace",
+    "SopDocument",
 ]

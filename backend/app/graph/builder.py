@@ -8,6 +8,8 @@
             ├─[route=clarify] → clarify → END
             ├─[route=create]  → task → risk → [should_rag] → rag → remind → done → END
             │                               → [!should_rag]→ remind → done → END
+            ├─[route=summary] → summary → END
+            ├─[route=query]   → query → END
             └─[route=done]    → done → END
 
 使用方式（在 agent.py 端点中）：
@@ -27,9 +29,11 @@ from app.graph.nodes import (
     clarify_node,
     done_node,
     merge_node,
+    query_node,
     rag_node,
     remind_node,
     risk_node,
+    summary_node,
     supervisor_node,
     task_node,
 )
@@ -48,12 +52,14 @@ def build_graph() -> StateGraph:
     g.add_node("risk", risk_node)
     g.add_node("rag", rag_node)
     g.add_node("remind", remind_node)
+    g.add_node("summary", summary_node)
+    g.add_node("query", query_node)
     g.add_node("done", done_node)
 
     # ── 入口 ──────────────────────────────────────────────────────────────
     g.set_entry_point("supervisor")
 
-    # ── 条件边：supervisor → {merge | clarify | task | done} ─────────────
+    # ── 条件边：supervisor → {merge | clarify | task | summary | done} ───
     g.add_conditional_edges(
         "supervisor",
         route_after_supervisor,
@@ -61,6 +67,8 @@ def build_graph() -> StateGraph:
             "merge": "merge",
             "clarify": "clarify",
             "task": "task",
+            "summary": "summary",
+            "query": "query",
             "done": "done",
         },
     )
@@ -92,6 +100,8 @@ def build_graph() -> StateGraph:
 
     # ── 终止节点 ──────────────────────────────────────────────────────────
     g.add_edge("clarify", END)
+    g.add_edge("summary", END)
+    g.add_edge("query", END)
     g.add_edge("done", END)
 
     return g

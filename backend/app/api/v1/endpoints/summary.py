@@ -18,7 +18,7 @@ from app.agents.summary_agent import (
     TypeCount,
     run_summary,
 )
-from app.api.deps import db_session
+from app.api.deps import db_session, get_current_user
 from app.core.response import success
 from app.schemas.summary import (
     AssigneeCountOut,
@@ -26,6 +26,7 @@ from app.schemas.summary import (
     TaskStatsOut,
     TypeCountOut,
 )
+from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -71,6 +72,7 @@ async def get_summary(
         description="周报起始日期，格式 YYYY-MM-DD（不传则取本周一）",
     ),
     write_notif: bool = Query(default=True, description="是否写入通知记录"),
+    current_user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     """实时查询统计数据并调用 LLM 生成自然语言报告。
@@ -102,6 +104,8 @@ async def get_summary(
         date_end=date_end,
         write_notif=write_notif,
     )
+    if write_notif:
+        await session.commit()
 
     resp = SummaryResponse(
         summary_type=result.summary_type,

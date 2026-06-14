@@ -18,7 +18,7 @@ class AgentState(TypedDict, total=False):
     trace_id: Optional[str]         # HTTP 请求级链路 ID（TraceIdMiddleware 注入）
 
     # ── Supervisor 路由决策 ─────────────────────────────────────────────────
-    route: str                      # "clarify" | "merge" | "create" | "done"
+    route: str                      # "clarify" | "merge" | "create" | "summary" | "done"
     intent: str                     # create_task | chitchat | query_task | unclear
 
     # ── Task Agent 输出（extract / merge） ──────────────────────────────────
@@ -27,6 +27,10 @@ class AgentState(TypedDict, total=False):
     pending_field: Optional[str]    # 缺失的业务必填字段名
     pending_question: Optional[str] # 针对该字段的追问文本
     reply: Optional[str]            # chitchat / query 场景的直接回复
+
+    # ── Summary Agent 输出 ────────────────────────────────────────────────
+    summary_request: Optional[dict] # 解析后的日报/周报请求参数
+    summary_obj: Optional[dict]     # SummaryResponse 序列化字典
 
     # ── Task Service 输出 ───────────────────────────────────────────────────
     task_id: Optional[int]
@@ -52,6 +56,13 @@ class AgentState(TypedDict, total=False):
 
     # ── 重试计数（Task Agent 自我反思） ────────────────────────────────────
     retry_count: int
+
+    # ── 可恢复错误（create_from_draft 失败，候选项返回前端供用户选择） ────
+    create_error: bool              # True 时下游节点跳过，final_response 已写入
+    error_candidates: Optional[dict]  # {"assignee": [...], "hospital": [...]}
+
+    # ── 任务查询 ──────────────────────────────────────────────────────────
+    query_params: Optional[dict]    # supervisor 从 LLM 输出解析的查询参数
 
     # ── Trace 上下文（由 trace_service 填充） ─────────────────────────────
     trace_root_id: Optional[int]    # 本次请求的根 AgentTrace.id

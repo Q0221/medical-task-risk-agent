@@ -105,4 +105,136 @@ async def get_gap(session: AsyncSession, gap_id: int) -> Optional[KnowledgeGapTa
     ).scalar_one_or_none()
 
 
-__all__ = ["create_gap_if_needed", "get_gap"]
+# ---------------------------------------------------------------------------
+# 列表查询
+# ---------------------------------------------------------------------------
+
+async def list_gaps(
+    session: AsyncSession,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    status: Optional[str] = None,
+    assignee_id: Optional[int] = None,
+    search: Optional[str] = None,
+) -> tuple[list[KnowledgeGapTask], int]:
+    """分页查询知识空缺任务列表。"""
+    from sqlalchemy import func
+
+    stmt = select(KnowledgeGapTask).where(KnowledgeGapTask.deleted_at.is_(None))
+
+    if status:
+        stmt = stmt.where(KnowledgeGapTask.status == status)
+    if assignee_id:
+        stmt = stmt.where(KnowledgeGapTask.assignee_id == assignee_id)
+    if search:
+        keyword = f"%{search.strip()}%"
+        stmt = stmt.where(KnowledgeGapTask.original_question.like(keyword))
+
+    total = (
+        await session.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar_one()
+
+    rows = (
+        await session.execute(
+            stmt.order_by(KnowledgeGapTask.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).scalars().all()
+
+    return list(rows), total
+
+
+# ---------------------------------------------------------------------------
+# 处理（知识补充人提交）
+# ---------------------------------------------------------------------------
+
+async def process_gap(
+    session: AsyncSession,
+    gap_id: int,
+    resolution_note: str,
+    action: str,  # "save_draft" | "submit_review"
+) -> KnowledgeGapTask:
+    """处理知识空缺：保存草稿或提交审核。"""
+    from app.core.exceptions import BizException
+
+    gap = await get_gap(session, gap_id)
+    if gap is None:
+        raise BizException(code=4044, message=f"知识空缺任务 id={gap_id} 不存在")
+    if gap.status == KnowledgeGapStatus.CLOSED.value:
+        raise BizException(code=4001, message="该任务已归档，无法操作")
+
+    gap.resolution_note = resolution_note
+    gap.status = (
+        KnowledgeGapStatus.IN_PROGRESS.value
+        if action == "save_draft"
+        else KnowledgeGapStatus.RESOLVED.value
+    )
+    await session.flush()
+    await session.refresh(gap)
+    logger.info("gap processed: id=%s status=%s", gap.id, gap.status)
+    return gap
+
+
+# ---------------------------------------------------------------------------
+# 审核（主管决策）
+# ---------------------------------------------------------------------------
+
+async def review_gap(
+    session: AsyncSession,
+    gap_id: int,
+    action: str,  # "approve" | "reject"
+    comment: Optional[str] = None,
+) -> KnowledgeGapTask:
+    """审核知识空缺：通过（归档关闭）或驳回（退回重做）。"""
+    from app.core.exceptions import BizException
+
+    gap = await get_gap(session, gap_id)
+    if gap is None:
+        raise BizException(code=4044, message=f"知识空缺任务 id={gap_id} 不存在")
+    if gap.status not in (KnowledgeGapStatus.RESOLVED.value, KnowledgeGapStatus.IN_PROGRESS.value):
+        raise BizException(code=4001, message="只有已提交审核的任务才能进行审核")
+
+    if action == "approve":
+        gap.status = KnowledgeGapStatus.CLOSED.value
+        if comment:
+            gap.resolution_note = (gap.resolution_note or "") + f"\n[审核通过] {comment}"
+    else:
+        gap.status = KnowledgeGapStatus.OPEN.value
+        if comment:
+            gap.resolution_note = (gap.resolution_note or "") + f"\n[审核驳回] {comment}"
+
+    await session.flush()
+    await session.refresh(gap)
+    logger.info("gap reviewed: id=%s action=%s status=%s", gap.id, action, gap.status)
+    return gap
+
+
+# ---------------------------------------------------------------------------
+# 归档
+# ---------------------------------------------------------------------------
+
+async def archive_gap(session: AsyncSession, gap_id: int) -> KnowledgeGapTask:
+    """手动归档知识空缺任务（直接关闭）。"""
+    from app.core.exceptions import BizException
+    from datetime import datetime, timezone
+
+    gap = await get_gap(session, gap_id)
+    if gap is None:
+        raise BizException(code=4044, message=f"知识空缺任务 id={gap_id} 不存在")
+
+    gap.status = KnowledgeGapStatus.CLOSED.value
+    await session.flush()
+    await session.refresh(gap)
+    return gap
+
+
+__all__ = [
+    "create_gap_if_needed",
+    "get_gap",
+    "list_gaps",
+    "process_gap",
+    "review_gap",
+    "archive_gap",
+]

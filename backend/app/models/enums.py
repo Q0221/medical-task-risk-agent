@@ -82,6 +82,7 @@ class TaskEventType(StrEnum):
     COMPLETE = "complete"
     CANCEL = "cancel"
     REOPEN = "reopen"
+    ATTACHMENT = "attachment"
 
 
 class NotificationChannel(StrEnum):
