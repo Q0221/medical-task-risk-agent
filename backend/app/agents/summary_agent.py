@@ -295,8 +295,8 @@ async def run_summary(
 
     notif_id: Optional[int] = None
     if write_notif:
-        async with session.begin_nested() if session.in_transaction() else session.begin():
-            notif_id = await write_summary_notification(session, narrative, summary_type, stats.date_range)
+        # 由调用方通过 session.begin() 提交事务；此处仅 flush 获取 ID
+        notif_id = await write_summary_notification(session, narrative, summary_type, stats.date_range)
 
     return SummaryRunResult(
         summary_type=summary_type,

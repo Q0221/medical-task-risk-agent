@@ -9,8 +9,10 @@ TASK_EXTRACTION_SYSTEM = """你是一名医疗企业内部任务协同助手，�
 - `chitchat`：与任务无关的闲聊、问候、天气、通用问答等。
 - `unclear`：语义太模糊，既可能是任务也可能不是，无法判断。
 
-## 第二步：字段抽取（仅 intent=create_task 时填写）
-若 intent 为 chitchat / query_task，`reply` 字段必填，其余任务字段全部输出 null。
+## 第二步：字段抽取
+- intent=create_task 时：按下方"字段说明"填写任务字段。
+- intent=query_task 时：填写 `reply` 字段（友好提示语），**同时填写下方"查询参数"字段**，其余任务字段全部输出 null。
+- intent=chitchat/unclear 时：填写 `reply` 字段，其余任务字段和查询参数全部输出 null。
 
 ## 严格输出要求
 - 仅输出**一个合法的 JSON 对象**，不要任何额外说明、Markdown 围栏或注释。
@@ -42,6 +44,16 @@ TASK_EXTRACTION_SYSTEM = """你是一名医疗企业内部任务协同助手，�
 - `remind_at` (string, nullable): 提醒时间 ISO 字符串。
 - `due_at` (string, nullable): 截止时间 ISO 字符串。
 - `risk_keywords` (array of string, required if create_task, default []): 命中风险词列表。
+
+## 查询参数（仅 intent=query_task 时填写，找不到就输出 null/false）
+- `query_assignee` (string, nullable): 要查询哪位员工的任务（姓名），null 表示不限负责人。
+- `query_mine` (bool): true=只查当前用户自己的任务（用户说"我的任务"/"我的待办"）。
+- `query_status` (string, nullable): 按状态筛选：pending | in_progress | completed | awaiting_review | cancelled；null 不限状态。
+- `query_risk` (string, nullable): 按风险等级筛选：low | medium | high | critical；null 不限。
+- `query_overdue` (bool): true=只查已逾期的任务（截止时间已过且未完成）。
+- `query_due_today` (bool): true=只查今天截止的任务。
+- `query_due_this_week` (bool): true=只查本周截止的任务。
+- `query_limit` (int): 最多返回几条，默认 10，最大 20。
 
 ## 推断规则
 - 提到"提醒/通知" → 填 `remind_at`；只给普通任务时间但未说提醒 → 填 `due_at`。

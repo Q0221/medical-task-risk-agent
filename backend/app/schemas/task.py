@@ -163,6 +163,87 @@ class TaskReviewResult(BaseModel):
     message: str
 
 
+class TaskEventOut(BaseModel):
+    """任务事件（时间线条目）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    event_type: str
+    operator_id: Optional[int]
+    operator_kind: str
+    payload: Optional[dict]
+    created_at: datetime
+
+
+class TaskTimelineResponse(BaseModel):
+    items: List[TaskEventOut]
+    total: int
+
+
+class TaskCommentRequest(BaseModel):
+    """POST /tasks/{id}/comments 请求体。"""
+
+    content: str = Field(..., min_length=1, max_length=2000)
+
+
+class TaskCommentOut(BaseModel):
+    """评论响应（从 TaskEvent 中提取）。"""
+
+    id: int
+    task_id: int
+    operator_id: Optional[int]
+    operator_kind: str
+    content: str
+    created_at: datetime
+
+
+class TaskAttachmentRequest(BaseModel):
+    """POST /tasks/{id}/attachments 请求体（无实际文件存储，记元数据）。"""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    url: Optional[str] = Field(default=None, max_length=1024)
+    size: Optional[int] = Field(default=None, description="文件大小（字节）")
+
+
+class TaskCollaboratorRequest(BaseModel):
+    """PATCH /tasks/{id}/collaborators 请求体（覆盖写入）。"""
+
+    user_ids: List[int] = Field(default_factory=list)
+
+
+class TaskBatchCompleteRequest(BaseModel):
+    """POST /tasks/batch/complete 请求体。"""
+
+    task_ids: List[int] = Field(..., min_length=1, max_length=50)
+    comment: Optional[str] = None
+
+
+class TaskBatchCancelRequest(BaseModel):
+    """POST /tasks/batch/cancel 请求体。"""
+
+    task_ids: List[int] = Field(..., min_length=1, max_length=50)
+    reason: Optional[str] = None
+
+
+class TaskBatchAssignRequest(BaseModel):
+    """POST /tasks/batch/assign 请求体（assignee_id 与 assignee_name 二选一）。"""
+
+    task_ids: List[int] = Field(..., min_length=1, max_length=50)
+    assignee_id: Optional[int] = None
+    assignee_name: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class TaskBatchResult(BaseModel):
+    """批量操作响应。"""
+
+    succeeded: List[int]
+    failed: List[int]
+    message: str
+
+
 # 显式导出 enum 给 schemas 包外使用
 __all__ = [
     "TaskDraft",

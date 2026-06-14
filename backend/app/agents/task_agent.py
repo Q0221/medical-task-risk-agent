@@ -51,6 +51,12 @@ _SPECIFIC_TASK_HINTS = (
     "不良", "反应", "合规", "审核", "合同", "订单", "报价", "付款", "发票", "验收",
     "培训", "维修", "回款", "报告", "SOP", "知识库", "库存", "发货", "交付", "安装",
     "升级", "复核", "召回", "病例", "患者",
+    "使用情况", "使用反馈", "运行状态", "运行情况", "使用状态", "巡检", "维保",
+)
+# 名词性具体事项后缀：标题命中即视为已明确任务内容
+_CONCRETE_TITLE_SUFFIXES = (
+    "使用情况", "使用反馈", "运行状态", "运行情况", "使用状态",
+    "巡检记录", "维保记录", "库存情况", "耗材余量",
 )
 
 
@@ -61,8 +67,9 @@ _SPECIFIC_TASK_HINTS = (
 @dataclass
 class IntentResult:
     """用户意图不是建任务（闲聊、查询等），附带友好回复。"""
-    intent: str          # chitchat | query_task | unclear
-    reply: str           # 给用户展示的回复
+    intent: str                            # chitchat | query_task | unclear
+    reply: str                             # 给用户展示的回复
+    raw_params: dict = field(default_factory=dict)  # LLM 原始输出（query_task 时含查询参数）
 
 
 @dataclass
@@ -253,7 +260,7 @@ def _dispatch(
     # ── 非建任务意图 ──
     if intent in ("chitchat", "query_task", "unclear"):
         reply = parsed.get("reply") or _default_non_task_reply(intent)
-        return IntentResult(intent=intent, reply=reply)
+        return IntentResult(intent=intent, reply=reply, raw_params=parsed)
 
     # ── 建任务意图：检查业务必填字段 ──
     clarify_fields, clarify_questions = _normalize_clarification(parsed)
@@ -309,16 +316,30 @@ def _normalize_clarification(parsed: dict) -> tuple[list[str], dict[str, str]]:
     return missing_fields, questions
 
 
+def _is_concrete_task_title(title: str) -> bool:
+    """识别「对象+状态/情况」类名词短语，视为具体任务内容。"""
+    if any(suffix in title for suffix in _CONCRETE_TITLE_SUFFIXES):
+        return True
+    # 「的」字偏正结构且无泛化动词，通常是具体事项（如「试用反馈汇总」）
+    if "的" in title and len(title) >= 5:
+        return not any(term in title for term in _GENERIC_TASK_TERMS)
+    return False
+
+
 def _needs_task_detail(parsed: dict) -> bool:
-    """判断任务是否只停留在“跟进/处理某对象”的泛化描述。"""
+    """判断任务标题是否仍停留在“跟进/处理某对象”的泛化描述。
+
+    仅检查 title，不拼接 description——description 常保留首轮原始语句，
+    其中的「回访」「医院」等泛化词会导致用户已补充的具体标题被误判。
+    """
     title = _clean_text(parsed.get("title"))
-    description = _clean_text(parsed.get("description"))
-    text = f"{title} {description}".strip()
     if not title:
         return True
-    if any(hint in text for hint in _SPECIFIC_TASK_HINTS):
+    if any(hint in title for hint in _SPECIFIC_TASK_HINTS):
         return False
-    return any(term in text for term in _GENERIC_TASK_TERMS)
+    if _is_concrete_task_title(title):
+        return False
+    return any(term in title for term in _GENERIC_TASK_TERMS)
 
 
 def _needs_assignee(parsed: dict) -> bool:

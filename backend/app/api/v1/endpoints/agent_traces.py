@@ -14,9 +14,10 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import db_session
+from app.api.deps import db_session, require_app_roles
 from app.core.response import success
 from app.models.agent_trace import AgentTrace
+from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -46,6 +47,7 @@ async def list_traces(
     node: Optional[str] = Query(default=None, description="按节点名过滤：supervisor / task_agent / risk_agent 等"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_app_roles("admin")),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     """查询 agent_traces 表，支持 trace_id / session_id / node 过滤，按 id 升序。

@@ -108,6 +108,46 @@ async def clear_session(redis: Redis, session_id: str) -> None:
         await redis.delete(f"agent_session:{session_id}")
 
 
+# ---------------------------------------------------------------------------
+# 会话历史（供前端展示聊天记录，重启后可恢复）
+# ---------------------------------------------------------------------------
+
+_HISTORY_PREFIX = "agent_history:"
+_HISTORY_MAX = 100         # 每个会话最多保留 100 条消息
+_HISTORY_TTL = 7 * 86400  # 7 天
+
+
+async def append_history(
+    redis: Redis,
+    session_id: str,
+    entry: dict,
+) -> None:
+    """追加一条消息到会话历史 List。超过上限时滚动裁剪。"""
+    if not session_id:
+        return
+    key = f"{_HISTORY_PREFIX}{session_id}"
+    await redis.rpush(key, json.dumps(entry, ensure_ascii=False, default=str))
+    await redis.expire(key, _HISTORY_TTL)
+    length = await redis.llen(key)
+    if length > _HISTORY_MAX:
+        await redis.ltrim(key, -_HISTORY_MAX, -1)
+
+
+async def get_history(redis: Redis, session_id: str) -> list[dict]:
+    """取回会话历史（全部消息，按时间正序）。"""
+    if not session_id:
+        return []
+    key = f"{_HISTORY_PREFIX}{session_id}"
+    raw_items = await redis.lrange(key, 0, -1)
+    result = []
+    for raw in raw_items:
+        try:
+            result.append(json.loads(raw))
+        except Exception:
+            pass
+    return result
+
+
 __all__ = [
     "PendingDraft",
     "generate_session_id",
@@ -115,4 +155,6 @@ __all__ = [
     "load_pending",
     "consume_pending",
     "clear_session",
+    "append_history",
+    "get_history",
 ]

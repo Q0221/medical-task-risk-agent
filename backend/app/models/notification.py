@@ -8,7 +8,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -65,3 +65,11 @@ class Notification(BaseModel):
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    is_read: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        index=True,
+        comment="当前用户是否已读（广播通知为全局已读标记）",
+    )

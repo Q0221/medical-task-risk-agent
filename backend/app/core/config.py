@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
 
+    AUTH_SECRET_KEY: str = "dev-medflow-change-me"
+    AUTH_TOKEN_EXPIRE_MINUTES: int = 1440
+    AUTH_DEMO_PASSWORD: str = "123456"
+
     MYSQL_HOST: str = "127.0.0.1"
     MYSQL_PORT: int = 3306
     MYSQL_USER: str = "root"
