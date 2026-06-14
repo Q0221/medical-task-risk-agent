@@ -27,7 +27,7 @@ flowchart TB
 
   subgraph backend [后端 FastAPI]
     router[REST API]
-    graph[LangGraph编排]
+    langGraph[LangGraph编排]
     workers[Reminder/Notify Worker]
   end
 
@@ -49,8 +49,8 @@ flowchart TB
 
   pages --> apiClient
   apiClient -->|"/api/v1"| router
-  router --> graph
-  graph --> supervisor
+  router --> langGraph
+  langGraph --> supervisor
   supervisor --> taskAgent
   supervisor --> riskAgent
   supervisor --> ragAgent
@@ -58,7 +58,7 @@ flowchart TB
   taskAgent --> mysql
   riskAgent --> mysql
   ragAgent --> ragExt
-  graph --> workers
+  langGraph --> workers
   workers --> redis
   workers --> notifyAgent
   taskAgent --> llm
